@@ -1,6 +1,10 @@
 [Unit]
 Description=Presign API Service - S3 Pre-signed URL Generator
 After=network.target
+# Starting the API also starts its Envoy front proxy. A stop/start of presign-api
+# alone (e.g. a manual redeploy) otherwise leaves Envoy down: Requires= in the
+# Envoy unit propagates the stop, but not the start.
+Wants=envoy-presign-api.service
 Documentation=https://github.com/your-org/hf-s3-model-mirror
 
 [Service]
