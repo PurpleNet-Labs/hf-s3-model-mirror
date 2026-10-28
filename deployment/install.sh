@@ -144,7 +144,7 @@ elif [ -f "$INSTALL_DIR/pyproject.toml" ]; then
 else
     log_warn "No requirements.txt or pyproject.toml found"
     log_info "Installing minimal dependencies..."
-    .venv/bin/pip install fastapi uvicorn boto3 pyjwt pydantic-settings python-dotenv
+    .venv/bin/pip install fastapi uvicorn boto3 pydantic-settings python-dotenv
 fi
 
 # Step 10: Set permissions
@@ -199,10 +199,6 @@ if [ ! -f "$INSTALL_DIR/presign_api/.env" ]; then
 fi
 
 # Check for required environment variables
-if ! grep -q "AUTH_JWT_SECRET" "$INSTALL_DIR/presign_api/.env"; then
-    log_warn "AUTH_JWT_SECRET not found in .env file"
-fi
-
 if ! grep -q "S3_BUCKET" "$INSTALL_DIR/presign_api/.env"; then
     log_warn "S3_BUCKET not found in .env file"
 fi
@@ -303,9 +299,8 @@ log_info "  Logs:          $INSTALL_DIR/logs/"
 log_info "  Envoy Logs:    /var/log/envoy/"
 echo ""
 
-if [ -n "$(grep -L "AUTH_JWT_SECRET\|S3_BUCKET" "$INSTALL_DIR/presign_api/.env" 2>/dev/null)" ]; then
+if [ -n "$(grep -L "S3_BUCKET" "$INSTALL_DIR/presign_api/.env" 2>/dev/null)" ]; then
     log_warn "Don't forget to configure your .env file with:"
-    log_warn "  - AUTH_JWT_SECRET (JWT secret key)"
     log_warn "  - S3_BUCKET (S3 bucket name)"
     log_warn "  - AWS credentials or IAM role"
     echo ""

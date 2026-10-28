@@ -12,7 +12,9 @@ static_resources:
     address:
       socket_address:
         protocol: TCP
-        address: 0.0.0.0
+        # Loopback only: rhmp-services' Envoy (:8041) forwards here after ext_authz, and the
+        # service trusts the X-User-Id it sets. A routable address would bypass that check.
+        address: 127.0.0.1
         port_value: 8060
 
     filter_chains:

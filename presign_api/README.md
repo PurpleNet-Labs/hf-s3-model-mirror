@@ -84,17 +84,7 @@ AWS_PROFILE=your-profile
 # OR
 AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
 AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-
-# Authentication (choose one or both)
-# JWT Authentication (recommended)
-JWT_SECRET=B0a92k7WQvzcZ89z5R5Oh48daDzqZunonvxwL/xnmwI=
-JWT_ISSUER=purplehealth-rhmp
-
-# API Key Authentication (legacy)
-API_KEY=change-me
 ```
-
-**Important:** Use the same `JWT_SECRET` as your auth service to validate tokens correctly. The secret should be a Base64-encoded 32-byte string (256 bits for HS256).
 
 ## Environment variables
 
@@ -102,54 +92,26 @@ API_KEY=change-me
 - `S3_PREFIX_BASE` (default: `models/indicconformer`)
 - `S3_LLM_PREFIX_BASE` (default: `models/llm`)
 - `PRESIGN_TTL_SECONDS` (default: `900`)
-- `API_KEY` (default: empty = legacy API key auth disabled)
-- `JWT_SECRET` (default: empty = JWT auth disabled)
-- `JWT_ISSUER` (default: `purplehealth-rhmp` = expected token issuer)
 
-### Authentication Options
+### Authentication
 
-The service supports two authentication methods:
+The service does not verify tokens and holds no JWT secret. Clients call
+`/downloader/v1/...` on the public API host. rhmp-services' Envoy (`:8041`) puts every request
+except `/downloader/v1/health` through ext_authz: auth-service checks the bearer token and the
+license tier (Basic and up), then Envoy sets `X-User-Id` and `X-User-Role`. Client-sent copies
+are stripped first. The service requires `X-User-Id` and answers 401 without it.
 
-#### Option 1: JWT Authentication (Recommended)
+That only holds while the service is reachable through rhmp's Envoy alone, so uvicorn and this
+service's Envoy (`:8060`) both listen on `127.0.0.1`. Do not change either to a routable address.
 
-If `JWT_SECRET` is set, clients can authenticate using JWT tokens:
+Before Oct 2026 the service verified tokens itself with `AUTH_JWT_SECRET`. That copy drifted
+when rhmp rotated its secret, and every request failed with 401.
 
-```bash
-curl -H "Authorization: Bearer <jwt-token>" http://localhost:8000/v1/models/hi
-```
-
-**JWT Token Requirements:**
-- Algorithm: HS256 (HMAC with SHA-256)
-- Required claims:
-  - `exp` - Expiration timestamp (automatically validated)
-  - `iss` - Issuer (must match `JWT_ISSUER` setting)
-  - Additional claims: `user_id`, `user_uuid`, `role`, `email`, `session_id`
-- Header format: `Authorization: Bearer <token>`
-
-**Token validation checks:**
-- Signature verification using `JWT_SECRET`
-- Expiration time (token must not be expired)
-- Issuer claim (must match configured issuer)
-- Algorithm (must be HS256)
-
-#### Option 2: API Key Authentication (Legacy)
-
-If `API_KEY` is set, clients can authenticate using a simple API key:
+To call it locally, set the header yourself:
 
 ```bash
-curl -H "X-API-Key: change-me" http://localhost:8000/v1/models/hi
+curl -H "X-User-Id: 1" http://127.0.0.1:3060/downloader/v1/models
 ```
-
-#### Option 3: Both Methods (Backward Compatibility)
-
-Both authentication methods can be enabled simultaneously. The service will:
-1. First try JWT authentication if `Authorization` header is present
-2. Fall back to API key authentication if `X-API-Key` header is present
-3. Return 401 if neither valid authentication is provided
-
-#### No Authentication
-
-If both `JWT_SECRET` and `API_KEY` are empty, authentication is disabled (not recommended for production).
 
 ## Endpoints
 
