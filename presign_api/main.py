@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import jwt
 import logging
 import logging.handlers
 import sys
@@ -76,9 +75,8 @@ class Settings(BaseSettings):
     # twice over plus slack. Applied on both platforms for simplicity.
     tier_disk_headroom_multiplier: float = 2.5
 
-    # JWT authentication (required) - must match auth service
-    auth_jwt_secret: str  # Same as AUTH_JWT_SECRET in auth service
-    jwt_issuer: str = "purplehealth-rhmp"  # Expected issuer claim
+    # No JWT settings: rhmp-services' Envoy authenticates every request (ext_authz) and sets
+    # X-User-Id / X-User-Role. See _require_auth.
 
     # Logging configuration
     log_level: str = "info"
@@ -239,91 +237,28 @@ async def log_requests(request: Request, call_next):
     return response
 
 
-def _validate_jwt_token(token: str) -> dict:
-    """
-    Validate JWT token and return claims.
-
-    Args:
-        token: JWT token string (without 'Bearer' prefix)
-
-    Returns:
-        dict: Token claims including user_id, role, email, etc.
-
-    Raises:
-        HTTPException: If token is invalid, expired, or has wrong issuer
-    """
-    try:
-        # Decode and validate token
-        payload = jwt.decode(
-            token,
-            settings.auth_jwt_secret,
-            algorithms=["HS256"],
-            issuer=settings.jwt_issuer,
-            options={
-                "require_exp": True,  # Require expiration claim
-                "verify_exp": True,   # Verify token hasn't expired
-                "verify_iss": True,   # Verify issuer matches
-                "verify_signature": True,  # Verify HMAC signature
-            }
-        )
-        logger.info(f"JWT token validated successfully for user_id: {payload.get('user_id')}")
-        return payload
-    except jwt.ExpiredSignatureError:
-        logger.warning("JWT token expired")
-        raise HTTPException(status_code=401, detail="Invalid token")
-    except jwt.InvalidIssuerError:
-        logger.warning(f"Invalid JWT issuer. Expected: {settings.jwt_issuer}")
-        raise HTTPException(status_code=401, detail="Invalid token")
-    except jwt.InvalidSignatureError:
-        logger.warning("Invalid JWT signature")
-        raise HTTPException(status_code=401, detail="Invalid token")
-    except jwt.InvalidAlgorithmError:
-        logger.warning("Invalid JWT algorithm")
-        raise HTTPException(status_code=401, detail="Invalid token")
-    except jwt.DecodeError as e:
-        logger.warning(f"JWT decode error: {str(e)}")
-        raise HTTPException(status_code=401, detail="Invalid token")
-    except Exception as e:
-        logger.error(f"JWT validation failed: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-
 def _require_auth(
-    authorization: str | None = Header(default=None, alias="Authorization")
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+    x_user_role: str | None = Header(default=None, alias="X-User-Role"),
 ) -> dict:
     """
-    Require authentication via JWT token.
+    Require the identity that rhmp-services' Envoy sets after ext_authz.
 
-    Args:
-        authorization: Authorization header (Bearer token)
+    ext_authz (auth-service /auth/validate-token) has already checked the bearer token and the
+    caller's license tier, and Envoy strips any client-sent X-User-* first (D-325.1). This service
+    holds no JWT secret, so a rotation in rhmp-services can't make it reject valid tokens (staging,
+    27 Oct 2026). That is only safe because uvicorn and this service's Envoy listen on 127.0.0.1.
 
     Returns:
-        dict: JWT claims (user_id, role, email, etc.)
+        dict: user_id (int) and role, for logging
 
     Raises:
-        HTTPException: If authentication fails
+        HTTPException: 401 if the request carries no gateway identity
     """
-    if not authorization:
-        raise HTTPException(
-            status_code=401,
-            detail="Authorization header is required"
-        )
-
-    # Extract token from "Bearer <token>" format
-    parts = authorization.split(" ", 1)  # Split only on first space
-    if len(parts) != 2 or parts[0] != "Bearer":
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid authorization header format. Expected: Bearer <token>"
-        )
-
-    token = parts[1].strip()  # Strip any whitespace
-
-    # Log token length for debugging (don't log actual token)
-    logger.debug(f"Validating JWT token (length: {len(token)})")
-
-    claims = _validate_jwt_token(token)
-    return claims
+    if not x_user_id or not x_user_id.isdigit() or int(x_user_id) <= 0:
+        logger.warning("Request has no gateway identity - it did not come through rhmp Envoy ext_authz")
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return {"user_id": int(x_user_id), "role": x_user_role}
 
 
 def _model_key(lang: Language) -> str:
@@ -623,7 +558,6 @@ async def health_check():
         "environment": settings.environment,
         "checks": {
             "s3_configured": bool(settings.s3_bucket),
-            "jwt_configured": bool(settings.auth_jwt_secret),
         }
     }
 

@@ -71,13 +71,11 @@ The script will:
 - Install Python 3.11 and dependencies
 - Create virtual environment
 - Install Python packages
-- Ask you for configuration values (JWT_SECRET, etc.)
+- Ask you for configuration values (S3 bucket, etc.)
 - Install and start the systemd service
 
-**IMPORTANT**: When prompted for `JWT_SECRET`, use the **SAME secret** from your auth service:
-```
-JWT_SECRET=B0a92k7WQvzcZ89z5R5Oh48daDzqZunonvxwL/xnmwI=
-```
+There is no JWT secret to configure: rhmp-services' Envoy authenticates requests and sets
+`X-User-Id` (see `presign_api/README.md`, Authentication).
 
 ---
 
@@ -112,9 +110,6 @@ S3_LLM_PREFIX_BASE=models/llm
 # Pre-signed URL TTL (15 minutes)
 PRESIGN_TTL_SECONDS=900
 
-# JWT Authentication (REQUIRED - use same secret as auth service)
-JWT_SECRET=B0a92k7WQvzcZ89z5R5Oh48daDzqZunonvxwL/xnmwI=
-JWT_ISSUER=purplehealth-rhmp
 EOF
 
 chmod 600 presign_api/.env
@@ -279,14 +274,11 @@ aws s3 ls s3://glycosense-models-v1/models/ --region us-east-1
 # If fails, IAM role is not attached or has insufficient permissions
 ```
 
-### JWT token validation failing
+### Every request returns 401 "Authentication required"
 
-```bash
-# Verify JWT_SECRET matches auth service
-grep JWT_SECRET /opt/presign-api/presign_api/.env
-
-# Test token generation on auth service and validation on presign API
-```
+The request did not come through rhmp-services' Envoy, so it has no `X-User-Id`. The public
+route is `https://<api-host>/downloader/v1/...` (edge → rhmp Envoy `:8041` → ext_authz →
+`:8060`). The presign log says "did not come through rhmp Envoy ext_authz".
 
 ---
 
